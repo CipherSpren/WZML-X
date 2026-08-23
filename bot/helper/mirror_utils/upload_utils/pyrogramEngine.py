@@ -156,40 +156,45 @@ class TgUploader:
             return buttons.build_menu(1)
         return None
 
-    async def __copy_file(self):
-        try:
-            if self.__bot_pm and (
-                self.__leechmsg
-                and not self.__listener.excep_chat
-                or self.__listener.isSuperGroup
-            ):
-                copied = await bot.copy_message(
-                    chat_id=self.__user_id,
-                    from_chat_id=self.__sent_msg.chat.id,
-                    message_id=self.__sent_msg.id,
-                    reply_to_message_id=(
-                        self.__listener.botpmmsg.id
-                        if self.__listener.botpmmsg
-                        else None
-                    ),
-                )
-                if copied and self.__has_buttons:
-                    btn_markup = (
-                        InlineKeyboardMarkup(BTN)
-                        if (BTN := self.__sent_msg.reply_markup.inline_keyboard[:-1])
-                        else None
-                    )
-                    await editReplyMarkup(
-                        copied,
-                        (
-                            btn_markup
-                            if config_dict["SAVE_MSG"]
-                            else self.__sent_msg.reply_markup
+    if self.__bot_pm:
+            while True:
+                try:
+                    copied = await bot.copy_message(
+                        chat_id=self.__user_id,
+                        from_chat_id=self.__sent_msg.chat.id,
+                        message_id=self.__sent_msg.id,
+                        reply_to_message_id=(
+                            self.__listener.botpmmsg.id
+                            if hasattr(self.__listener, 'botpmmsg') and self.__listener.botpmmsg
+                            else None
                         ),
                     )
-        except Exception as err:
-            if not self.__is_cancelled:
-                LOGGER.error(f"Failed To Send in BotPM:\n{str(err)}")
+                    if copied and self.__has_buttons:
+                        btn_markup = (
+                            InlineKeyboardMarkup(BTN)
+                            if (BTN := self.__sent_msg.reply_markup.inline_keyboard[:-1])
+                            else None
+                        )
+                        await editReplyMarkup(
+                            copied,
+                            (
+                                btn_markup
+                                if config_dict["SAVE_MSG"]
+                                else self.__sent_msg.reply_markup
+                            ),
+                        )
+                    break # Success, exit the loop
+                except FloodWait as f:
+                    LOGGER.warning(f"FloodWait {f.value}s in BotPM copy, retrying...")
+                    await sleep(f.value + 1)
+                except Exception as err:
+                    if not self.__is_cancelled:
+                        err_msg = str(err)
+                        if "Can't copy" in err_msg:
+                            LOGGER.warning(f"BotPM copy skipped (restricted content): {err_msg}")
+                        else:
+                            LOGGER.error(f"Failed To Send in BotPM:\n{err_msg}")
+                    break # Exit loop on normal errors
 
         try:
             if len(self.__leechmsg) > 1 and not self.__listener.excep_chat:
