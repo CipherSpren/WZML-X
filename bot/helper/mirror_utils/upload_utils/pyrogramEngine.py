@@ -302,6 +302,7 @@ class TgUploader:
         )
         if not await aiopath.exists(self.__thumb):
             self.__thumb = None
+
     async def __msg_to_reply(self):
         msg_link = self.__listener.message.link if self.__listener.isSuperGroup else ""
         msg_user = self.__listener.message.from_user
