@@ -157,48 +157,40 @@ class TgUploader:
         return None
 
     async def __copy_file(self):
-        # 1. Bot PM Logic
-        if self.__bot_pm:
-            while True:
-                try:
-                    copied = await bot.copy_message(
-                        chat_id=self.__user_id,
-                        from_chat_id=self.__sent_msg.chat.id,
-                        message_id=self.__sent_msg.id,
-                        reply_to_message_id=(
-                            self.__listener.botpmmsg.id
-                            if hasattr(self.__listener, 'botpmmsg') and self.__listener.botpmmsg
-                            else None
+        try:
+            if self.__bot_pm and (
+                self.__leechmsg
+                and not self.__listener.excep_chat
+                or self.__listener.isSuperGroup
+            ):
+                copied = await bot.copy_message(
+                    chat_id=self.__user_id,
+                    from_chat_id=self.__sent_msg.chat.id,
+                    message_id=self.__sent_msg.id,
+                    reply_to_message_id=(
+                        self.__listener.botpmmsg.id
+                        if self.__listener.botpmmsg
+                        else None
+                    ),
+                )
+                if copied and self.__has_buttons:
+                    btn_markup = (
+                        InlineKeyboardMarkup(BTN)
+                        if (BTN := self.__sent_msg.reply_markup.inline_keyboard[:-1])
+                        else None
+                    )
+                    await editReplyMarkup(
+                        copied,
+                        (
+                            btn_markup
+                            if config_dict["SAVE_MSG"]
+                            else self.__sent_msg.reply_markup
                         ),
                     )
-                    if copied and self.__has_buttons:
-                        btn_markup = (
-                            InlineKeyboardMarkup(BTN)
-                            if (BTN := self.__sent_msg.reply_markup.inline_keyboard[:-1])
-                            else None
-                        )
-                        await editReplyMarkup(
-                            copied,
-                            (
-                                btn_markup
-                                if config_dict["SAVE_MSG"]
-                                else self.__sent_msg.reply_markup
-                            ),
-                        )
-                    break
-                except FloodWait as f:
-                    LOGGER.warning(f"FloodWait {f.value}s in BotPM copy, retrying...")
-                    await sleep(f.value + 1)
-                except Exception as err:
-                    if not self.__is_cancelled:
-                        err_msg = str(err)
-                        if "Can't copy" in err_msg:
-                            LOGGER.warning(f"BotPM copy skipped (restricted content): {err_msg}")
-                        else:
-                            LOGGER.error(f"Failed To Send in BotPM:\n{err_msg}")
-                    break
+        except Exception as err:
+            if not self.__is_cancelled:
+                LOGGER.error(f"Failed To Send in BotPM:\n{str(err)}")
 
-        # 2. Leech Log Logic
         try:
             if len(self.__leechmsg) > 1 and not self.__listener.excep_chat:
                 for chat_id, msg in list(self.__leechmsg.items())[1:]:
@@ -218,16 +210,10 @@ class TgUploader:
             if not self.__is_cancelled:
                 LOGGER.error(f"Failed To Send in Leech Log [ {chat_id} ]:\n{str(err)}")
 
-        # 3. Dump Channels Logic (with FloodWait protection)
-        if self.__upload_dest:
-            for channel_id in self.__upload_dest:
-                if not channel_id:
-                    continue
-                try:
-                    chat = await chat_info(channel_id)
-                    if not chat:
-                        continue
-                    while True:
+        try:
+            if self.__upload_dest:
+                for channel_id in self.__upload_dest:
+                    if chat := (await chat_info(channel_id)):
                         try:
                             dump_copy = await bot.copy_message(
                                 chat_id=chat.id,
@@ -252,15 +238,12 @@ class TgUploader:
                                         else self.__sent_msg.reply_markup
                                     ),
                                 )
-                            break
-                        except FloodWait as f:
-                            LOGGER.warning(f"FloodWait {f.value}s in Dump [{channel_id}], retrying...")
-                            await sleep(f.value + 1)
-                except (ChannelInvalid, PeerIdInvalid) as e:
-                    LOGGER.error(f"{e.__class__.__name__}: {e} for Dump ID {channel_id}")
-                except Exception as err:
-                    if not self.__is_cancelled:
-                        LOGGER.error(f"Failed To Send in User Dump [{channel_id}]:\n{err}")
+                        except (ChannelInvalid, PeerIdInvalid) as e:
+                            LOGGER.error(f"{e.NAME}: {e.MESSAGE} for {channel_id}")
+                            continue
+        except Exception as err:
+            if not self.__is_cancelled:
+                LOGGER.error(f"Failed To Send in User Dump:\n{str(err)}")
 
     async def __upload_progress(self, current, total):
         if self.__is_cancelled:
@@ -285,16 +268,9 @@ class TgUploader:
         self.__mediainfo = user_dict.get("mediainfo") or (
             config_dict["SHOW_MEDIAINFO"] if "mediainfo" not in user_dict else False
         )
-        
-        # New Multi-Dump logic
-        ud = getattr(self.__listener, "upPath", None)
-        if isinstance(ud, list):
-            self.__upload_dest = [x for x in ud if x]
-        elif ud:
-            self.__upload_dest = [ud]
-        else:
-            self.__upload_dest = []
-            
+        self.__upload_dest = (
+            ud if (ud := self.__listener.upPath) and isinstance(ud, list) else [ud]
+        )
         self.__has_buttons = bool(
             config_dict["SAVE_MSG"]
             or self.__mediainfo
@@ -420,54 +396,36 @@ class TgUploader:
             for m in msgs_list:
                 self.__msgs_dict[m.link] = m.caption
         self.__sent_msg = msgs_list[-1]
-        
-        # 1. Bot PM for Albums
-        if self.__bot_pm:
-            while True:
-                try:
-                    await bot.copy_media_group(
-                        chat_id=self.__user_id,
-                        from_chat_id=self.__sent_msg.chat.id,
-                        message_id=self.__sent_msg.id,
-                    )
-                    break
-                except FloodWait as f:
-                    LOGGER.warning(f"FloodWait {f.value}s in BotPM media group copy, retrying...")
-                    await sleep(f.value + 1)
-                except Exception as err:
-                    if not self.__is_cancelled:
-                        err_msg = str(err)
-                        if "Can't copy" in err_msg:
-                            LOGGER.warning(f"BotPM media group skipped (restricted content): {err_msg}")
-                        else:
-                            LOGGER.error(f"Failed To Send in Bot PM:\n{err_msg}")
-                    break
-
-        # 2. Dump Channels for Albums (with FloodWait protection)
-        if self.__upload_dest:
-            for channel_id in self.__upload_dest:
-                if not channel_id:
-                    continue
-                try:
-                    dump_chat = await chat_info(channel_id)
-                    if not dump_chat:
-                        continue
-                    while True:
+        try:
+            if self.__bot_pm and (
+                self.__leechmsg
+                and not self.__listener.excep_chat
+                or self.__listener.isSuperGroup
+            ):
+                await bot.copy_media_group(
+                    chat_id=self.__user_id,
+                    from_chat_id=self.__sent_msg.chat.id,
+                    message_id=self.__sent_msg.id,
+                )
+        except Exception as err:
+            if not self.__is_cancelled:
+                LOGGER.error(f"Failed To Send in Bot PM:\n{str(err)}")
+        try:
+            if self.__upload_dest:
+                for channel_id in self.__upload_dest:
+                    if dump_chat := (await chat_info(channel_id)):
                         try:
                             await bot.copy_media_group(
                                 chat_id=dump_chat.id,
                                 from_chat_id=self.__sent_msg.chat.id,
                                 message_id=self.__sent_msg.id,
                             )
-                            break
-                        except FloodWait as f:
-                            LOGGER.warning(f"FloodWait {f.value}s in Dump Media Group [{channel_id}], retrying...")
-                            await sleep(f.value + 1)
-                except (ChannelInvalid, PeerIdInvalid) as e:
-                    LOGGER.error(f"{e.__class__.__name__}: {e} for Dump ID {channel_id}")
-                except Exception as err:
-                    if not self.__is_cancelled:
-                        LOGGER.error(f"Failed To Send Media Group in Dump [{channel_id}]:\n{err}")
+                        except (ChannelInvalid, PeerIdInvalid) as e:
+                            LOGGER.error(f"{e.NAME}: {e.MESSAGE} for {channel_id}")
+                            continue
+        except Exception as err:
+            if not self.__is_cancelled:
+                LOGGER.error(f"Failed To Send in User Dump:\n{str(err)}")
 
     async def upload(self, o_files, m_size, size):
         await self.__user_settings()
