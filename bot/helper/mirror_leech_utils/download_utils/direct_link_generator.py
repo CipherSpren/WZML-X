@@ -5,7 +5,7 @@ from http.cookiejar import MozillaCookieJar
 from json import loads
 from lxml.etree import HTML
 from os import path as ospath
-from re import findall, fullmatch, match, search, sub
+from re import findall, match, search, sub
 from niquests import Session, post, get
 from niquests.adapters import HTTPAdapter
 from time import sleep, time
@@ -1664,23 +1664,8 @@ def _gofile_salt(_slot):
     try:
         js = get("https://gofile.io/js/wt.obf.js", timeout=15).text
         js = sub(r"\\x([0-9a-f]{2})", lambda m: chr(int(m[1], 16)), js)
-        strings = findall(r"'([^']*)'", search(r"\[((?:'[^']*',?)+)\]", js)[1])
-        keys = set(findall(r",'([^']{4})'\)", js))
-        for raw in (b64decode(x.swapcase() + "===") for x in strings):
-            for key in keys:
-                box, j = list(range(256)), 0
-                for i in range(256):
-                    j = (j + box[i] + ord(key[i % 4])) % 256
-                    box[i], box[j] = box[j], box[i]
-                i = j = 0
-                out = bytearray()
-                for c in raw:
-                    i = (i + 1) % 256
-                    j = (j + box[i]) % 256
-                    box[i], box[j] = box[j], box[i]
-                    out.append(c ^ box[(box[i] + box[j]) % 256])
-                if fullmatch(rb"[0-9a-f]{14}", out):
-                    return out.decode()
+        if salt := search(r"'([0-9a-f]{14})'", js[js.index("generateWT") :]):
+            return salt[1]
     except Exception:
         pass
     return "12af056dacea0b"
@@ -1697,6 +1682,22 @@ def gofile(url):
         _id = url.split("/")[-1]
     except Exception as e:
         raise DirectDownloadLinkException(f"ERROR: {e.__class__.__name__}")
+
+    def __add_content_item(node, folderPath, details):
+        if not folderPath:
+            folderPath = details["title"]
+        item = {
+            "path": ospath.join(folderPath),
+            "filename": node["name"],
+            "url": node["link"],
+        }
+        if "size" in node:
+            size = node["size"]
+            if isinstance(size, str) and size.isdigit():
+                size = float(size)
+            details["total_size"] += size
+        details["contents"].append(item)
+        return folderPath
 
     def __get_token(session):
         headers = {
@@ -1752,30 +1753,19 @@ def gofile(url):
         if not details["title"]:
             details["title"] = data["name"] if data["type"] == "folder" else _id
 
-        contents = data["children"]
-        for content in contents.values():
+        if "children" not in data:
+            __add_content_item(data, folderPath, details)
+            return
+
+        for content in data["children"].values():
             if content["type"] == "folder":
                 if not content["public"]:
                     continue
-                if not folderPath:
-                    newFolderPath = ospath.join(details["title"], content["name"])
-                else:
-                    newFolderPath = ospath.join(folderPath, content["name"])
+                base = folderPath if folderPath else details["title"]
+                newFolderPath = ospath.join(base, content["name"])
                 __fetch_links(session, content["id"], newFolderPath)
             else:
-                if not folderPath:
-                    folderPath = details["title"]
-                item = {
-                    "path": ospath.join(folderPath),
-                    "filename": content["name"],
-                    "url": content["link"],
-                }
-                if "size" in content:
-                    size = content["size"]
-                    if isinstance(size, str) and size.isdigit():
-                        size = float(size)
-                    details["total_size"] += size
-                details["contents"].append(item)
+                folderPath = __add_content_item(content, folderPath, details)
 
     details = {"contents": [], "title": "", "total_size": 0}
     with Session() as session:
