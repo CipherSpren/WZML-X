@@ -30,7 +30,7 @@ python-magic
 pytz
 pyyaml
 qbittorrent-api
-niquests<3.0.0
+niquests==3.21.1
 speedtest-cli
 tenacity
 uvicorn
