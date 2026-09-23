@@ -2,7 +2,7 @@ from json import JSONDecodeError
 from functools import wraps
 
 from niquests import AsyncSession
-from niquests.packages.urllib3 import disable_warnings
+from urllib3 import disable_warnings
 from niquests.packages.urllib3.exceptions import InsecureRequestWarning
 
 from .exception import APIConnectionError, APIResponseError
